@@ -10,13 +10,16 @@ import bcrypt from 'bcryptjs';
 import User from './models/User';
 import jwt from 'jsonwebtoken';
 import  connectDB  from "./config/db";
-
+import cors from "cors";
 
 // Load environment variables
 dotenv.config();
 
 
 const app = express();
+app.use(cors({
+  origin: "*"
+}));
 const PORT = 3000;
 
 const createToken = (id: string) => {

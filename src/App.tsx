@@ -10,6 +10,7 @@ import AdminConsole from './components/AdminConsole';
 import AIAssistantWidget from './components/AIAssistantWidget';
 import { Report, Squad, Citizen, Transformation } from './types';
 import { api } from './lib/api';
+import { API_URL } from "../config";
 
 export default function App() {
   const [view, setView] = useState<string>('home');
