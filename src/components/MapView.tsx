@@ -14,7 +14,13 @@ interface MapViewProps {
   userDistrict?: string;
 }
 
-const DEFAULT_CENTER: [number, number] = [21.5433, 39.1728];
+
+
+
+
+
+
+
 
 // Helper to convert report coordinate styles or raw Lat/Lng to real Leaflet LatLng coordinates
 function getLatLngFromReport(report: Report, center: [number, number]): L.LatLngExpression {
@@ -55,6 +61,8 @@ function createCustomMarkerIcon(category: string, urgency: string, isSelected: b
   });
 }
 
+const NYC_CENTER: [number, number] = [40.7128, -74.0060];
+
 export default function MapView({
   reports,
   setReports,
@@ -66,6 +74,9 @@ export default function MapView({
   // Feed Filters
   const [urgencyFilter, setUrgencyFilter] = useState<'All' | 'High' | 'Medium' | 'Low'>('All');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [mission, setMission] = useState<any>(null);
+const [loadingMission, setLoadingMission] = useState(false);
   
   // Submit New Report Modal state
   const [showNewReportModal, setShowNewReportModal] = useState(false);
@@ -75,12 +86,67 @@ export default function MapView({
   const [newReportDistrict, setNewReportDistrict] = useState(userDistrict || 'Downtown');
   const [newReportCategory, setNewReportCategory] = useState('Pothole');
 
+
+  const generateMission = () => {
+  const missions = [
+    {
+      title: "Green Corridor Recovery Initiative",
+      priorityScore: 94,
+      estimatedTime: "2 Hours",
+      impact: "Improve neighborhood cleanliness and public safety."
+    },
+    {
+      title: "Downtown Safety Sweep",
+      priorityScore: 88,
+      estimatedTime: "1.5 Hours",
+      impact: "Reduce hazards around busy intersections."
+    },
+    {
+      title: "Community Infrastructure Rescue",
+      priorityScore: 91,
+      estimatedTime: "3 Hours",
+      impact: "Address multiple high-priority citizen reports."
+    }
+  ];
+
+  const selected =
+    missions[Math.floor(Math.random() * missions.length)];
+
+  setMission({
+    ...selected,
+    tasks: [
+      {
+        title: "Verify local reports",
+        category: "Verification",
+        reward: 20
+      },
+      {
+        title: "Capture evidence photos",
+        category: "Documentation",
+        reward: 15
+      },
+      {
+        title: "Coordinate community response",
+        category: "Action",
+        reward: 30
+      }
+    ]
+  });
+};
   // Sync district with user's selected neighborhood
   useEffect(() => {
     if (userDistrict) {
       setNewReportDistrict(userDistrict);
     }
   }, [userDistrict]);
+
+  useEffect(() => {
+  if (innerTab === 'map' && mapInstanceRef.current) {
+    setTimeout(() => {
+      mapInstanceRef.current?.invalidateSize();
+    }, 100);
+  }
+}, [innerTab]);
 
   // Selected Pin Coordinates for exact geo reports
   const [selectedCoordinates, setSelectedCoordinates] = useState<{ lat: number; lng: number } | null>(null);
@@ -145,6 +211,12 @@ export default function MapView({
       markersGroupRef.current = markersGroup;
       mapInstanceRef.current = map;
 
+      setTimeout(() => {
+  map.invalidateSize();
+}, 500);
+
+   
+
       // Handle map clicks to place exact pins for community issues
       map.on('click', (e: L.LeafletMouseEvent) => {
         const { lat, lng } = e.latlng;
@@ -184,6 +256,7 @@ export default function MapView({
         const latLng = getLatLngFromReport(rep, NYC_CENTER);
         const isSelected = activeReportId === rep.id;
         const pinIcon = createCustomMarkerIcon(rep.category, rep.urgency, isSelected);
+        console.log(reports);
 
         const marker = L.marker(latLng, { icon: pinIcon });
         
@@ -216,16 +289,18 @@ export default function MapView({
     e.preventDefault();
     if (!newReportTitle || !newReportDesc) return;
 
+    
+
     try {
       const partialReport: Partial<Report> = {
-        title: newReportTitle,
-        description: newReportDesc,
-        urgency: newReportUrgency,
-        district: newReportDistrict,
-        category: newReportCategory,
-        lat: selectedCoordinates?.lat,
-        lng: selectedCoordinates?.lng,
-      };
+  title: newReportTitle,
+  description: newReportDesc,
+  urgency: newReportUrgency,
+  district: newReportDistrict,
+  category: newReportCategory,
+  lat: selectedCoordinates?.lat,
+  lng: selectedCoordinates?.lng,
+};
 
       const created = await api.createReport(partialReport);
       setReports([created, ...reports]);
@@ -318,7 +393,7 @@ export default function MapView({
   });
 
   return (
-    <div className="space-y-8 animate-entrance max-w-[1200px] mx-auto px-4 py-6">
+    <div className="w-full px-4 py-6">
       
       {/* Styles for pulse animations inside leaflet marker */}
       <style>{`
@@ -375,6 +450,102 @@ export default function MapView({
           </button>
         </div>
       </div>
+<div className="bg-gradient-to-r from-violet-600 to-blue-600 rounded-2xl p-5 shadow-xl mb-6 text-white">
+  <div className="flex justify-between items-center">
+    <div>
+      <h3 className="text-lg font-black">
+        AI Mission Commander
+      </h3>
+
+      <p className="text-sm text-blue-100 mt-1">
+        Generate an optimized community action plan from live reports.
+      </p>
+    </div>
+
+    <button
+      onClick={generateMission}
+      disabled={loadingMission}
+      className="bg-white text-blue-600 px-5 py-3 rounded-xl font-bold hover:scale-105 transition-all"
+    >
+      {loadingMission
+        ? "Analyzing..."
+        : "Generate Mission"}
+    </button>
+  </div>
+</div>
+
+{mission && (
+  <div className="bg-white rounded-3xl shadow-xl border border-slate-100 p-6 mb-6">
+
+    <div className="flex justify-between items-center mb-5">
+      <div>
+        <p className="text-xs uppercase tracking-widest text-violet-600 font-bold">
+          AI Generated Mission
+        </p>
+
+        <h2 className="text-2xl font-black text-slate-800">
+          {mission.title}
+        </h2>
+      </div>
+
+      <div className="text-right">
+        <div className="text-3xl font-black text-green-600">
+          {mission.priorityScore}
+        </div>
+        <div className="text-xs text-slate-500">
+          Priority Score
+        </div>
+      </div>
+    </div>
+
+    <div className="grid grid-cols-2 gap-4 mb-6">
+      <div className="bg-slate-50 rounded-xl p-4">
+        <div className="text-xs text-slate-500">
+          Estimated Time
+        </div>
+        <div className="font-bold">
+          {mission.estimatedTime}
+        </div>
+      </div>
+
+      <div className="bg-slate-50 rounded-xl p-4">
+        <div className="text-xs text-slate-500">
+          Community Impact
+        </div>
+        <div className="font-bold">
+          High
+        </div>
+      </div>
+    </div>
+
+    <p className="text-slate-600 mb-6">
+      {mission.impact}
+    </p>
+
+    <div className="space-y-3">
+      {mission.tasks?.map((task: any, idx: number) => (
+        <div
+          key={idx}
+          className="flex justify-between items-center bg-slate-50 rounded-xl p-4"
+        >
+          <div>
+            <div className="font-semibold">
+              {task.title}
+            </div>
+            <div className="text-sm text-slate-500">
+              {task.category}
+            </div>
+          </div>
+
+          <div className="font-bold text-violet-600">
+            +{task.reward}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
+
 
       {/* -------------------- TAB 1: TACTICAL MAP -------------------- */}
       {innerTab === 'map' && (

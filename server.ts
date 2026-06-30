@@ -6,13 +6,28 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import crypto from 'crypto';
 import { Report } from './src/types';
+import bcrypt from 'bcryptjs';
+import User from './models/User';
+import jwt from 'jsonwebtoken';
+import  connectDB  from "./config/db";
+
 
 // Load environment variables
 dotenv.config();
 
+
 const app = express();
 const PORT = 3000;
 
+const createToken = (id: string) => {
+  return jwt.sign(
+    { id },
+    process.env.JWT_SECRET!,
+    {
+      expiresIn: "7d",
+    }
+  );
+};
 // Set up large payload body parsing for base64 image uploads
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ limit: '15mb', extended: true }));
@@ -121,30 +136,6 @@ function rateLimitAuth(req: any, res: any, next: any) {
   next();
 }
 
-// Helper: Hashing and Cryptography
-function hashPassword(password: string, salt: string): string {
-  return crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-}
-
-function generateToken(email: string): string {
-  const signature = crypto.createHmac('sha256', 'community-hero-secret-key-2026').update(email).digest('hex');
-  return `${Buffer.from(email).toString('base64')}.${signature}`;
-}
-
-function verifyTokenAndGetEmail(token: string): string | null {
-  try {
-    const [base64Email, signature] = token.split('.');
-    if (!base64Email || !signature) return null;
-    const email = Buffer.from(base64Email, 'base64').toString('utf-8');
-    const expectedSignature = crypto.createHmac('sha256', 'community-hero-secret-key-2026').update(email).digest('hex');
-    if (signature === expectedSignature) {
-      return email;
-    }
-  } catch (err) {
-    // Graceful validation error
-  }
-  return null;
-}
 
 // Database Helpers: Users
 function loadUsers(): Record<string, any> {
@@ -291,6 +282,7 @@ let genAIClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI | null {
   if (!genAIClient) {
     const key = process.env.GEMINI_API_KEY;
+
     if (key && key !== 'MY_GEMINI_API_KEY' && key.trim() !== '') {
       try {
         genAIClient = new GoogleGenAI({
@@ -306,23 +298,35 @@ function getGenAI(): GoogleGenAI | null {
       }
     }
   }
+
   return genAIClient;
 }
-
 // Authentication Middleware
-app.use((req: any, res, next) => {
+app.use(async (req: any, res, next) => {
   const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.substring(7);
-    const email = verifyTokenAndGetEmail(token);
-    if (email) {
-      const users = loadUsers();
-      const user = users[email.toLowerCase()];
+
+  if (
+    authHeader &&
+    authHeader.startsWith('Bearer ')
+  ) {
+    try {
+      const token = authHeader.split(' ')[1];
+
+      const decoded: any = jwt.verify(
+        token,
+        process.env.JWT_SECRET!
+      );
+
+      const user = await User.findById(
+        decoded.id
+      );
+
       if (user) {
         req.user = user;
       }
-    }
+    } catch (err) {}
   }
+
   next();
 });
 
@@ -349,82 +353,93 @@ function isMockUser(email?: string): boolean {
 // ==========================================
 
 // Authenticated User Registration
-app.post('/api/auth/register', rateLimitAuth, (req, res) => {
-  const { name, email, password, avatar, role } = req.body;
-  const rawIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
-  const ip = Array.isArray(rawIp) ? rawIp[0] : rawIp;
-  if (!name || !email || !password) {
-    logAuditEvent('AUTH_REGISTER', 'Registration rejected: Missing mandatory parameters', false, email, ip);
-    return res.status(400).json({ error: 'Name, email, and password are required' });
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      return res.status(400).json({
+        error: "User already exists",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+    });
+
+    const token = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET!,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      token,
+      user,
+    });
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({
+      error: "Registration failed",
+    });
   }
+});
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-  const users = loadUsers();
-  const lowerEmail = email.toLowerCase();
-  if (users[lowerEmail]) {
-    logAuditEvent('AUTH_REGISTER', `Registration rejected: Email already registered: ${lowerEmail}`, false, lowerEmail, ip);
-    return res.status(400).json({ error: 'This email address is already registered' });
+    const user = await User.findOne({
+      email,
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        error: "Invalid credentials",
+      });
+    }
+
+    const match = await bcrypt.compare(
+      password,
+      user.password
+    );
+
+    if (!match) {
+      return res.status(400).json({
+        error: "Invalid credentials",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        id: user._id,
+      },
+      process.env.JWT_SECRET!,
+      {
+        expiresIn: "7d",
+      }
+    );
+
+    res.json({
+      token,
+      user,
+    });
+
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Login failed",
+    });
   }
-
-  // Validate chosen role
-  const userRole = (role === 'Civil Servant' || role === 'Organizer' || role === 'Volunteer') ? role : 'Volunteer';
-
-  const salt = crypto.randomBytes(16).toString('hex');
-  const passwordHash = hashPassword(password, salt);
-
-  const defaultAvatar = `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150`; // dynamic placeholder
-  const isMock = isMockUser(lowerEmail);
-  const newUser = {
-    id: `usr-${Date.now()}`,
-    name,
-    email: lowerEmail,
-    points: isMock ? (userRole === 'Civil Servant' ? 800 : userRole === 'Organizer' ? 600 : 480) : 0, // 0 starting points for custom profiles
-    avatar: avatar || defaultAvatar,
-    role: userRole,
-    salt,
-    passwordHash,
-    joinedSquads: []
-  };
-
-  users[lowerEmail] = newUser;
-  saveUsers(users);
-
-  logAuditEvent('AUTH_REGISTER', `New user registered successfully: ${lowerEmail} as [${userRole}]`, true, lowerEmail, ip);
-
-  const token = generateToken(lowerEmail);
-  const { passwordHash: _, salt: __, ...userProfile } = newUser;
-  res.status(201).json({ token, user: userProfile });
 });
 
-// Authenticated User Login
-app.post('/api/auth/login', rateLimitAuth, (req, res) => {
-  const { email, password } = req.body;
-  const rawIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
-  const ip = Array.isArray(rawIp) ? rawIp[0] : rawIp;
-  if (!email || !password) {
-    logAuditEvent('AUTH_LOGIN', 'Authentication rejected: Missing credentials', false, email, ip);
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
-
-  const users = loadUsers();
-  const lowerEmail = email.toLowerCase();
-  const user = users[lowerEmail];
-  if (!user) {
-    logAuditEvent('AUTH_LOGIN', `Authentication failure: Account not found: ${lowerEmail}`, false, lowerEmail, ip);
-    return res.status(400).json({ error: 'Incorrect email or password combination' });
-  }
-
-  const incomingHash = hashPassword(password, user.salt);
-  if (incomingHash !== user.passwordHash) {
-    logAuditEvent('AUTH_LOGIN', `Authentication failure: Incorrect password for: ${lowerEmail}`, false, lowerEmail, ip);
-    return res.status(400).json({ error: 'Incorrect email or password combination' });
-  }
-
-  logAuditEvent('AUTH_LOGIN', `Authentication successful: ${lowerEmail} logged in`, true, lowerEmail, ip);
-
-  const token = generateToken(user.email);
-  const { passwordHash: _, salt: __, ...userProfile } = user;
-  res.json({ token, user: userProfile });
-});
 
 // Authenticated Session Checker
 app.get('/api/auth/me', (req: any, res) => {
@@ -697,6 +712,8 @@ app.post('/api/assistant/chat', async (req, res) => {
     return res.status(400).json({ error: 'Invalid message structure' });
   }
 
+  
+
   // Construct a hyper-contextual system instruction embedding the current site state
   let systemInstruction = `You are the AI Civic Integrity Assistant for the Community Hero platform.
   You are helpful, encouraging, and informative. Your goal is to guide citizens in identifying, reporting, verifying, and resolving local community issues (potholes, water leaks, flickering streetlights, waste, etc.).
@@ -790,6 +807,164 @@ You can mention these specific real-time issues and encourage the user to help v
     }
 
     return res.json({ text });
+  }
+});
+
+app.post('/api/mission/generate', async (req, res) => {
+  const { district, reports } = req.body;
+
+  const ai = getGenAI();
+
+  if (!ai) {
+    return res.status(500).json({
+      error: "Gemini unavailable"
+    });
+  }
+
+  try {
+    const prompt = `
+Generate a civic action mission.
+
+Return ONLY valid JSON.
+
+{
+  "title":"",
+  "priorityScore":0,
+  "estimatedTime":"",
+  "impact":"",
+  "tasks":[
+    {
+      "title":"",
+      "category":"",
+      "reward":0
+    }
+  ]
+}
+
+Neighborhood:
+${district}
+
+Active Reports:
+${JSON.stringify(reports)}
+
+Use professional civic language.
+
+Mission titles should sound inspiring.
+
+Examples:
+
+Downtown Safety Sweep
+Westside Community Restoration
+Green Corridor Recovery Initiative
+
+Keep impact descriptions concise.
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    const text = response.text.trim();
+
+    const mission = JSON.parse(text);
+
+    return res.json(mission);
+
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Mission generation failed"
+    });
+  }
+});
+
+
+app.post('/api/ai/mission', async (req, res) => {
+  const { userDistrict, reports } = req.body;
+
+  const ai = getGenAI();
+
+  if (!ai) {
+    return res.json({
+      title: "Neighborhood Rescue Mission",
+      priorityScore: 87,
+      estimatedTime: "45 mins",
+      impact: "High",
+      tasks: reports?.slice(0, 3).map((r: any) => ({
+        title: r.title,
+        category: r.category,
+        reward: r.urgency === "High" ? 150 : 50
+      })) || []
+    });
+  }
+
+  try {
+    const prompt = `
+Generate a civic action mission.
+
+Return ONLY valid JSON.
+
+{
+  "title":"",
+  "priorityScore":0,
+  "estimatedTime":"",
+  "impact":"",
+  "tasks":[
+    {
+      "title":"",
+      "category":"",
+      "reward":0
+    }
+  ]
+}
+
+Use professional civic language.
+
+Mission titles should sound inspiring.
+
+Examples:
+
+"Downtown Safety Sweep"
+"Westside Community Restoration"
+"Green Corridor Recovery Initiative"
+
+Keep impact descriptions concise.
+
+Prioritize the most urgent unresolved reports.
+
+Include exact report titles in tasks whenever possible.
+
+Neighborhood: ${district}
+Active Reports:
+${JSON.stringify(activeReports)}
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    const mission = JSON.parse(result.text);
+
+res.json(mission);
+
+    const text = response.text || "";
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+
+    if (!jsonMatch) {
+      throw new Error("No JSON returned");
+    }
+
+    return res.json(JSON.parse(jsonMatch[0]));
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      error: "Mission generation failed"
+    });
   }
 });
 
@@ -1009,6 +1184,8 @@ app.post('/api/admin/db/backup', (req: any, res) => {
 // ==========================================
 
 async function startServer() {
+
+  await connectDB();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

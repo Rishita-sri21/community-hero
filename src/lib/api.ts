@@ -52,6 +52,26 @@ const makeHeaders = (additional: Record<string, string> = {}) => {
 };
 
 export const api = {
+
+  async generateMission(userDistrict: string, reports: any[]) {
+  const res = await fetch('/api/ai/mission', {
+    method: 'POST',
+    headers: makeHeaders(),
+    body: JSON.stringify({
+      userDistrict,
+      reports
+    })
+  });
+
+  if (!res.ok) {
+    throw new Error('Mission generation failed');
+  }
+
+  return res.json();
+},
+
+
+
   // Authentication & Session Endpoints
   async register(name: string, email: string, password: string, avatar?: string, role?: string): Promise<AuthResponse> {
     const res = await fetch('/api/auth/register', {
@@ -66,6 +86,8 @@ export const api = {
     const data: AuthResponse = await res.json();
     localStorage.setItem(TOKEN_KEY, data.token);
     return data;
+
+    
   },
 
   async login(email: string, password: string): Promise<AuthResponse> {
@@ -260,4 +282,6 @@ export const api = {
     }
     return res.json();
   },
+
+  
 };

@@ -1,5 +1,14 @@
 [
   {
+    "id": "log-1782831937788-784210fc",
+    "timestamp": "2026-06-30T15:05:37.796Z",
+    "event": "AUTH_LOGIN",
+    "message": "Authentication successful: sarah@example.com logged in",
+    "success": true,
+    "userEmail": "sarah@example.com",
+    "ipAddress": "127.0.0.1"
+  },
+  {
     "id": "log-1782570307148-a1fc08a7",
     "timestamp": "2026-06-27T14:25:07.148Z",
     "event": "AUTH_REGISTER",
